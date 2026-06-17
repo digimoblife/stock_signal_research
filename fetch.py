@@ -18,8 +18,11 @@ log = logging.getLogger("fetch")
 DATA_DIR = Path(DATA_DIR)
 DATA_DIR.mkdir(exist_ok=True)
 
+MAX_RETRIES = 3
+RETRY_DELAYS = [1, 2, 4]  # seconds
 
-def fetch_one(ticker: str) -> pd.DataFrame | None:
+
+def fetch_one(ticker: str, attempt: int = 1) -> pd.DataFrame | None:
     """Download one ticker from Yahoo Finance. Returns DataFrame or None."""
     try:
         stock = yf.Ticker(ticker + ".JK")
@@ -40,7 +43,12 @@ def fetch_one(ticker: str) -> pd.DataFrame | None:
         return df
 
     except Exception as e:
-        log.error(f"{ticker}: {e}")
+        log.error(f"{ticker}: {e} (attempt {attempt}/{MAX_RETRIES})")
+        if attempt < MAX_RETRIES:
+            delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+            log.info(f"{ticker}: retrying in {delay}s...")
+            time.sleep(delay)
+            return fetch_one(ticker, attempt + 1)
         return None
 
 

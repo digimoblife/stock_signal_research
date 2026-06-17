@@ -8,6 +8,9 @@ Usage:
   python run.py performance # print performance report
   python run.py open        # show open signals
   python run.py test        # test Telegram connection
+  python run.py health      # run health checks
+  python run.py init        # initialize database
+  python run.py fetch       # fetch all data (alias for daily data step)
 """
 import sys
 import logging
@@ -117,9 +120,24 @@ def cmd_open():
 
 def cmd_test():
     """Test Telegram connection."""
-    from telegram_senders import send_test
+    from telegram_sender import send_test
     ok = send_test()
     print("Telegram OK." if ok else "Telegram FAILED.")
+
+
+def cmd_init():
+    """Initialize SQLite database and create tables."""
+    from track import connect
+    conn = connect()
+    conn.close()
+    print("Database initialized.")
+
+
+def cmd_fetch():
+    """Fetch/update all ticker data."""
+    from fetch import fetch_all
+    ok, failed = fetch_all()
+    print(f"Fetch complete: {ok} OK, {failed} failed")
 
 
 def cmd_health():
@@ -146,6 +164,8 @@ if __name__ == "__main__":
         "performance": cmd_performance,
         "open": cmd_open,
         "test": cmd_test,
+        "init": cmd_init,
+        "fetch": cmd_fetch,
         "health": cmd_health,
     }
 

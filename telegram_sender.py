@@ -17,6 +17,9 @@ except ImportError:
     Bot = None
     TGError = Exception
 
+MAX_RETRIES = 3
+RETRY_DELAYS = [1, 2, 4]  # seconds
+
 
 def _get_bot() -> Bot:
     if Bot is None:
@@ -26,14 +29,19 @@ def _get_bot() -> Bot:
     return Bot(token=TELEGRAM_BOT_TOKEN)
 
 
-async def _send(text: str) -> bool:
-    """Async send. Returns True on success."""
+async def _send(text: str, attempt: int = 1) -> bool:
+    """Async send with retry. Returns True on success."""
     try:
         bot = _get_bot()
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
         return True
     except Exception as e:
-        log.error(f"Telegram send failed: {e}")
+        log.error(f"Telegram send failed: {e} (attempt {attempt}/{MAX_RETRIES})")
+        if attempt < MAX_RETRIES:
+            delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+            log.info(f"Retrying in {delay}s...")
+            await asyncio.sleep(delay)
+            return await _send(text, attempt + 1)
         return False
 
 

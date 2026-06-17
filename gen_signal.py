@@ -13,6 +13,7 @@ from research import (
     load_ticker, volume_divergence_signals, momentum_signals,
     rsi_signals, breakout_signals,
 )
+import filter
 from filter import should_trade, get_market_regime, classify_liquidity, augment_signal
 
 log = logging.getLogger("signal")
@@ -63,7 +64,7 @@ def confidence_score(signal_type: str, df: pd.DataFrame, idx: int) -> int:
         # Use the improved score from our analysis
         row = pd.Series({"vol_5": vol_ratio, "ret_5": ret_5,
                          "bull_streak": bull_streak, "bear_streak": bear_streak})
-        return filter.score_signal.__wrapped__(row) if hasattr(filter.score_signal, '__wrapped__') else _legacy_score(row, vol_ratio, ret_5, bull_streak, bear_streak)
+        return filter.score_signal(row)
 
     elif signal_type == "momentum_20d":
         ret = df["close"].pct_change(20).iloc[idx]
