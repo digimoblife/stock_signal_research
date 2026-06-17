@@ -11,6 +11,7 @@ Usage:
   python run.py health      # run health checks
   python run.py init        # initialize database
   python run.py fetch       # fetch all data (alias for daily data step)
+  python run.py export      # export signals.db to CSV files
 """
 import sys
 import logging
@@ -151,6 +152,12 @@ def cmd_health():
     send(report.text("🩺 Daily Health Check"))
 
 
+def cmd_export():
+    """Export signals.db to CSV files for spreadsheet analysis."""
+    from export import run
+    run()
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -167,6 +174,7 @@ if __name__ == "__main__":
         "init": cmd_init,
         "fetch": cmd_fetch,
         "health": cmd_health,
+        "export": cmd_export,
     }
 
     if cmd in commands:
