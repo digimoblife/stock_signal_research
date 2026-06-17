@@ -73,6 +73,43 @@ def format_signal(s: dict, signal_id: str = "") -> str:
         f"",
         f"{s['reasoning']}",
     ]
+
+    # Market context
+    regime = s.get("regime", "")
+    liq = s.get("liquidity", "")
+    if regime or liq:
+        lines.append(f"")
+        parts = []
+        if regime:
+            parts.append(f"Market: {regime}")
+        if liq:
+            parts.append(f"Cap: {liq}")
+        lines.append("  |  ".join(parts))
+
+    # Holding period statistics
+    stats = s.get("holding_stats")
+    if stats:
+        lines.append(f"")
+        p25 = stats["resolution_p25"]
+        p75 = stats["resolution_p75"]
+        lines.append(f"Expected Resolution Window:")
+        lines.append(f"{p25} — {p75} trading days")
+        lines.append(f"(P25–P75 of {stats['sample_size']} similar trades)")
+        lines.append(f"")
+        lines.append(f"Historical Outcomes:")
+
+        tp_line = f"  TP hit:   {stats['tp_rate']}%"
+        if stats.get("tp_median_days") is not None:
+            tp_line += f"  (median {stats['tp_median_days']} days)"
+        lines.append(tp_line)
+
+        stop_line = f"  Stop hit: {stats['stop_rate']}%"
+        if stats.get("stop_median_days") is not None:
+            stop_line += f"  (median {stats['stop_median_days']} days)"
+        lines.append(stop_line)
+
+        lines.append(f"  Expired:  {stats['expired_rate']}%  (at 5-day limit)")
+
     if signal_id:
         lines.append(f"")
         lines.append(f"ID: {signal_id}")

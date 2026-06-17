@@ -15,6 +15,7 @@ from research import (
 )
 import filter
 from filter import should_trade, get_market_regime, classify_liquidity, augment_signal
+from track import get_holding_stats
 
 log = logging.getLogger("signal")
 
@@ -170,6 +171,11 @@ def generate_signals(today: str = None) -> list[dict]:
         else:
             reasoning = f"{signal_func.replace('_', ' ').title()}: bearish signal detected"
 
+        # Attach holding period stats, regime, liquidity
+        holding = get_holding_stats(ACTIVE_STRATEGY, conf)
+        regime = get_market_regime()
+        liq = classify_liquidity(ticker)
+
         signals.append({
             "ticker": ticker,
             "date": signal_date.strftime("%Y-%m-%d"),
@@ -182,6 +188,9 @@ def generate_signals(today: str = None) -> list[dict]:
             "risk_reward": round(rr, 2),
             "reasoning": reasoning,
             "strategy": signal_func,
+            "holding_stats": holding,
+            "regime": regime,
+            "liquidity": liq,
         })
 
     # Sort by confidence

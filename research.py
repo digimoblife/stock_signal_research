@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from settings import DATA_DIR, TRAIN_START, TRAIN_END, TEST_START, TOTAL_COST, TICKERS
+import filter
 
 log = logging.getLogger("research")
 DATA_DIR = Path(DATA_DIR)
@@ -161,6 +162,7 @@ def backtest_strategy(name: str, signal_func, data: dict,
     exit after 5 days at close, or stop/target.
 
     Returns dict with metrics or None if < MIN_TRADES.
+    Each trade dict includes exit_reason, confidence, and signal metadata.
     """
     all_trades = []
 
@@ -202,43 +204,75 @@ def backtest_strategy(name: str, signal_func, data: dict,
             if direction == 1:  # BUY
                 stop = entry_price - 2 * atr
                 target = entry_price + 4 * atr
-                # Check if stop or target hit during hold period
                 held = df.iloc[entry_idx:exit_idx + 1]
                 hit_stop = held["low"].min() <= stop
                 hit_target = held["high"].max() >= target
-                if hit_stop:
-                    exit_price = stop
-                elif hit_target:
-                    exit_price = target
-                pnl = (exit_price / entry_price - 1) - TOTAL_COST
-
             else:  # SELL
                 stop = entry_price + 2 * atr
                 target = entry_price - 4 * atr
                 held = df.iloc[entry_idx:exit_idx + 1]
                 hit_stop = held["high"].max() >= stop
                 hit_target = held["low"].min() <= target
-                if hit_stop:
-                    exit_price = stop
-                elif hit_target:
-                    exit_price = target
+
+            if hit_stop:
+                exit_reason = "stop_loss"
+                exit_price = stop
+                # Find which day stop was hit
+                actual_exit = exit_idx
+                for stop_idx in range(entry_idx, exit_idx + 1):
+                    if (direction == 1 and df.iloc[stop_idx]["low"] <= stop) or \
+                       (direction != 1 and df.iloc[stop_idx]["high"] >= stop):
+                        exit_date = df.index[stop_idx]
+                        actual_exit = stop_idx
+                        break
+            elif hit_target:
+                exit_reason = "take_profit"
+                exit_price = target
+                actual_exit = exit_idx
+                for tp_idx in range(entry_idx, exit_idx + 1):
+                    if (direction == 1 and df.iloc[tp_idx]["high"] >= target) or \
+                       (direction != 1 and df.iloc[tp_idx]["low"] <= target):
+                        exit_date = df.index[tp_idx]
+                        actual_exit = tp_idx
+                        break
+            else:
+                exit_reason = "time_stop"
+                actual_exit = exit_idx
+
+            if direction == 1:
+                pnl = (exit_price / entry_price - 1) - TOTAL_COST
+            else:
                 pnl = (entry_price / exit_price - 1) - TOTAL_COST
 
-            days_held = (exit_date - entry_date).days
+            days_held = actual_exit - entry_idx  # trading days
+
+            # Compute confidence for volume divergence trades
+            if name == "volume_divergence":
+                sig_row = {
+                    "vol_5": row.get("vol_5", 1.0),
+                    "ret_5": row.get("ret_5", 0.0),
+                    "bull_streak": row.get("bull_streak", 0),
+                    "bear_streak": row.get("bear_streak", 0),
+                }
+                confidence = filter.score_signal(pd.Series(sig_row))
+            else:
+                confidence = 50
 
             all_trades.append({
                 "ticker": ticker,
                 "entry_date": entry_date.strftime("%Y-%m-%d"),
                 "exit_date": exit_date.strftime("%Y-%m-%d"),
                 "direction": "BUY" if direction == 1 else "SELL",
-                "entry_price": round(entry_price, 2),
-                "exit_price": round(exit_price, 2),
-                "pnl_pct": round(pnl * 100, 2),
-                "days_held": days_held,
+                "entry_price": float(round(entry_price, 2)),
+                "exit_price": float(round(exit_price, 2)),
+                "exit_reason": exit_reason,
+                "pnl_pct": float(round(pnl * 100, 2)),
+                "days_held": int(days_held),
+                "confidence": int(confidence),
             })
 
     if len(all_trades) < 10:
-        return None
+        return None, []
 
     # Compute metrics
     df_trades = pd.DataFrame(all_trades)
@@ -264,13 +298,44 @@ def backtest_strategy(name: str, signal_func, data: dict,
             max(sum(1 for _ in g) for k, g in
                 __import__('itertools').groupby(pnls <= 0) if k)
         ) if len(pnls) > 0 else 0,
-    }
+    }, all_trades
+
+
+# ── Save backtest trades to database ──────────────────────────
+
+def save_backtest_trades(all_trades, strategy):
+    """Save backtest trade results to the database for holding period analysis."""
+    from track import connect
+
+    conn = connect()
+    try:
+        for t in all_trades:
+            conn.execute(
+                """INSERT OR IGNORE INTO trades
+                   (id, ticker, direction, entry_date, entry_price,
+                    exit_date, exit_price, exit_reason, pnl_pct, days_held,
+                    source, strategy, confidence)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    f"BT-{t['entry_date'].replace('-', '')}-{t['ticker']}-{strategy[:4]}",
+                    t["ticker"], t["direction"],
+                    t["entry_date"], t["entry_price"],
+                    t["exit_date"], t["exit_price"],
+                    t.get("exit_reason", "time_stop"),
+                    t["pnl_pct"], t["days_held"],
+                    "backtest", strategy, t.get("confidence", 50),
+                ),
+            )
+        conn.commit()
+        log.info(f"Saved {len(all_trades)} backtest trades for {strategy}")
+    finally:
+        conn.close()
 
 
 # ── Run all strategies ──────────────────────────────────────────
 
 def run():
-    """Run all strategies, print ranked results."""
+    """Run all strategies, print ranked results. Saves trades to DB."""
     data = load_all()
 
     strategies = [
@@ -280,12 +345,22 @@ def run():
         ("breakout_20d", lambda df: breakout_signals(df, 20)),
     ]
 
+    # Clear old backtest trades before re-running
+    from track import connect
+    db_conn = connect()
+    try:
+        db_conn.execute("DELETE FROM trades WHERE source = 'backtest'")
+        db_conn.commit()
+    finally:
+        db_conn.close()
+
     results = []
     for name, func in strategies:
         log.info(f"Testing {name}...")
-        result = backtest_strategy(name, func, data)
+        result, trades = backtest_strategy(name, func, data)
         if result:
             results.append(result)
+            save_backtest_trades(trades, name)
             log.info(f"  {name}: {result['trades']} trades, "
                      f"precision {result['precision']*100:.1f}%, "
                      f"sharpe {result['sharpe']:.2f}")

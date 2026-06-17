@@ -58,7 +58,24 @@ def connect():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    # Migrate: add columns for holding period tracking
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn):
+    """Add columns for holding period analysis (idempotent)."""
+    migrations = [
+        "ALTER TABLE trades ADD COLUMN source TEXT DEFAULT 'paper'",
+        "ALTER TABLE trades ADD COLUMN strategy TEXT",
+        "ALTER TABLE trades ADD COLUMN confidence INTEGER",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    conn.commit()
 
 
 def save_signal(signal: dict) -> str:
@@ -144,6 +161,92 @@ def get_all_signals() -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def get_holding_stats(strategy: str, confidence: int,
+                      min_samples: int = 30) -> dict | None:
+    """
+    Compute holding period statistics from similar historical trades.
+
+    Two-tier matching:
+      Tier 1: same strategy + confidence decile (n >= min_samples)
+      Tier 2: same strategy, all confidences (n >= min_samples)
+      Fallback: None if insufficient data.
+    """
+    import numpy as np
+
+    conn = connect()
+    try:
+        def _stats_for_bucket(conf_lo, conf_hi):
+            rows = conn.execute(
+                """SELECT t.days_held, t.exit_reason, t.pnl_pct
+                   FROM trades t
+                   WHERE t.strategy = ?
+                     AND t.source = 'backtest'
+                     AND t.exit_reason IS NOT NULL
+                     AND t.exit_reason != 'still_open'
+                     AND t.days_held IS NOT NULL
+                     AND t.confidence BETWEEN ? AND ?""",
+                (strategy, conf_lo, conf_hi),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        decile = (confidence // 10) * 10
+        tier1 = _stats_for_bucket(decile, decile + 9)
+        if len(tier1) >= min_samples:
+            trades = tier1
+        else:
+            tier2 = _stats_for_bucket(0, 100)
+            if len(tier2) >= min_samples:
+                trades = tier2
+            else:
+                return None
+
+    finally:
+        conn.close()
+
+    days = np.array([t["days_held"] for t in trades if t["days_held"] is not None])
+    if len(days) < min_samples:
+        return None
+
+    # Separate outcomes
+    tp_days = np.array([
+        t["days_held"] for t in trades
+        if t["exit_reason"] == "take_profit" and t["days_held"] is not None
+    ])
+    stop_days = np.array([
+        t["days_held"] for t in trades
+        if t["exit_reason"] == "stop_loss" and t["days_held"] is not None
+    ])
+    expired = len([
+        t for t in trades if t["exit_reason"] == "time_stop"
+    ])
+    total = len(trades)
+    pnls = np.array([
+        t["pnl_pct"] for t in trades if t["pnl_pct"] is not None
+    ])
+
+    result = {
+        "sample_size": total,
+        "resolution_p25": int(np.percentile(days, 25)),
+        "resolution_p75": int(np.percentile(days, 75)),
+        "tp_rate": round(len(tp_days) / total * 100, 1),
+        "stop_rate": round(len(stop_days) / total * 100, 1),
+        "expired_rate": round(expired / total * 100, 1),
+        "avg_return": round(float(np.mean(pnls)), 2) if len(pnls) > 0 else 0.0,
+    }
+
+    if len(tp_days) >= 5:
+        result["tp_median_days"] = int(np.median(tp_days))
+    else:
+        result["tp_median_days"] = None
+
+    if len(stop_days) >= 5:
+        result["stop_median_days"] = int(np.median(stop_days))
+    else:
+        result["stop_median_days"] = None
+
+    return result
 
 
 def get_performance() -> dict:
