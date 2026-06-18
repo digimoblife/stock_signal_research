@@ -24,8 +24,8 @@ RETRY_DELAYS = [1, 2, 4]  # seconds
 def _get_bot() -> Bot:
     if Bot is None:
         raise ImportError("pip install python-telegram-bot")
-    if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN":
-        raise ValueError("Set TELEGRAM_BOT_TOKEN in settings.py")
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN":
+        raise ValueError("Set TELEGRAM_BOT_TOKEN in .env file")
     return Bot(token=TELEGRAM_BOT_TOKEN)
 
 

@@ -1,9 +1,14 @@
 # settings.py — single source of every configuration value
 # Change NOTHING else in the codebase. Only edit this file.
 
-# --- Tokens ---
-TELEGRAM_BOT_TOKEN = "8761189242:AAGn6MLlFeW9NfmoOOSNf8lT9EeHo2z4GD0"
-TELEGRAM_CHAT_ID = "6394819718"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# --- Tokens (from .env) ---
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # --- Stock universe ---
 TICKERS = [

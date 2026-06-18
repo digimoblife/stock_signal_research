@@ -990,7 +990,7 @@ cat ~/idx-research/settings.py | grep -E "TELEGRAM"
 **Fixes:**
 ```bash
 # Fix token: get a new one from @BotFather
-nano ~/idx-research/settings.py
+nano ~/idx-research/.env
 # Update TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, save, exit
 
 # Retry
