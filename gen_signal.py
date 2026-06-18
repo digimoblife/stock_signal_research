@@ -8,14 +8,15 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from settings import DATA_DIR, MIN_CONFIDENCE, MAX_DAILY_SIGNALS, MIN_RISK_REWARD, TICKERS
+from settings import DATA_DIR, MIN_CONFIDENCE, MAX_DAILY_SIGNALS, MIN_RISK_REWARD, TICKERS, LONG_ONLY_MODE
 from research import (
     load_ticker, volume_divergence_signals, momentum_signals,
     rsi_signals, breakout_signals,
 )
 import filter
 from filter import should_trade, get_market_regime, classify_liquidity, augment_signal
-from track import get_holding_stats
+from track import get_holding_stats, get_open_signals
+from ai_explain import generate_signal_explanation
 
 log = logging.getLogger("signal")
 
@@ -90,6 +91,42 @@ def confidence_score(signal_type: str, df: pd.DataFrame, idx: int) -> int:
     return min(100, max(0, conf))
 
 
+def _build_ai_context(df, ticker, confidence, direction_str,
+                       holding, regime, liquidity):
+    """Extract ticker-level data for the AI explanation generator."""
+    close_price = float(df["close"].iloc[-1])
+    volume_today = float(df["volume"].iloc[-1])
+    vol_20 = df["volume"].rolling(20).mean()
+    volume_avg_20d = float(vol_20.iloc[-1]) if not pd.isna(vol_20.iloc[-1]) else volume_today
+
+    ret_series = df["close"].pct_change(5)
+    ret_5_pct = float(ret_series.iloc[-1] * 100) if not pd.isna(ret_series.iloc[-1]) else 0.0
+
+    # Volume ratio: today vs average of previous 5 days
+    prev_vol = df["volume"].iloc[max(0, len(df) - 6):len(df) - 1].mean()
+    vol_ratio = float(volume_today / prev_vol) if prev_vol > 0 else 1.0
+
+    last_5 = df.tail(5)
+    prices_5d = [float(x) for x in last_5["close"].values]
+    volumes_5d = [float(x) for x in last_5["volume"].values]
+
+    return {
+        "ticker": ticker,
+        "direction": direction_str,
+        "confidence": confidence,
+        "regime": regime or "unknown",
+        "liquidity": liquidity or "unknown",
+        "ret_5_pct": ret_5_pct,
+        "vol_ratio": vol_ratio,
+        "close_price": close_price,
+        "volume_today": volume_today,
+        "volume_avg_20d": volume_avg_20d,
+        "prices_5d": prices_5d,
+        "volumes_5d": volumes_5d,
+        "holding_stats": holding,
+    }
+
+
 def generate_signals(today: str = None) -> list[dict]:
     """
     Generate signals for tonight/tomorrow.
@@ -97,6 +134,13 @@ def generate_signals(today: str = None) -> list[dict]:
     """
     if today is None:
         today = datetime.now()
+
+    today_dt = today if isinstance(today, datetime) else datetime.now()
+
+    # Load tickers with existing open signals — block duplicates
+    open_tickers = {s["ticker"] for s in get_open_signals()}
+    if open_tickers:
+        log.info(f"Tickers with open signals (skipped): {sorted(open_tickers)}")
 
     strategy_func = STRATEGY_MAP.get(ACTIVE_STRATEGY)
     if not strategy_func:
@@ -107,6 +151,10 @@ def generate_signals(today: str = None) -> list[dict]:
     signals = []
 
     for ticker in TICKERS:
+        if ticker in open_tickers:
+            log.debug(f"Skipping {ticker}: open signal exists")
+            continue
+
         df = load_ticker(ticker)
         if df.empty or len(df) < 60:
             continue
@@ -127,6 +175,10 @@ def generate_signals(today: str = None) -> list[dict]:
         latest = recent_signals.iloc[-1]
         signal_date = latest.name
         direction = int(latest["signal"])
+
+        if LONG_ONLY_MODE and direction == -1:
+            log.info(f"{ticker} SELL skipped (long-only mode)")
+            continue
 
         days_ago = (df.index[-1] - signal_date).days
         if days_ago > 10:
@@ -176,9 +228,15 @@ def generate_signals(today: str = None) -> list[dict]:
         regime = get_market_regime()
         liq = classify_liquidity(ticker)
 
+        # Build AI explanation context from current ticker data
+        ai_context = _build_ai_context(df, ticker, conf,
+                                       direction_str="BUY" if direction == 1 else "SELL",
+                                       holding=holding, regime=regime, liquidity=liq)
+        ai_explanation = generate_signal_explanation(ai_context)
+
         signals.append({
             "ticker": ticker,
-            "date": signal_date.strftime("%Y-%m-%d"),
+            "date": today_dt.strftime("%Y-%m-%d"),
             "direction": "BUY" if direction == 1 else "SELL",
             "confidence": conf,
             "entry_low": round(entry_low, 2),
@@ -191,6 +249,7 @@ def generate_signals(today: str = None) -> list[dict]:
             "holding_stats": holding,
             "regime": regime,
             "liquidity": liq,
+            "ai_explanation": ai_explanation,
         })
 
     # Sort by confidence

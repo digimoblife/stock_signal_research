@@ -74,6 +74,12 @@ def format_signal(s: dict, signal_id: str = "") -> str:
         f"{s['reasoning']}",
     ]
 
+    # AI explanation
+    ai = s.get("ai_explanation", "")
+    if ai:
+        lines.append(f"")
+        lines.append(ai)
+
     # Market context
     regime = s.get("regime", "")
     liq = s.get("liquidity", "")

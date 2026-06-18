@@ -64,11 +64,12 @@ def connect():
 
 
 def _migrate(conn):
-    """Add columns for holding period analysis (idempotent)."""
+    """Add columns for holding period analysis and deduplication (idempotent)."""
     migrations = [
         "ALTER TABLE trades ADD COLUMN source TEXT DEFAULT 'paper'",
         "ALTER TABLE trades ADD COLUMN strategy TEXT",
         "ALTER TABLE trades ADD COLUMN confidence INTEGER",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_ticker_date ON signals(ticker, date)",
     ]
     for sql in migrations:
         try:
@@ -84,8 +85,8 @@ def save_signal(signal: dict) -> str:
 
     conn = connect()
     try:
-        conn.execute(
-            """INSERT INTO signals
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO signals
                (id, ticker, date, direction, confidence,
                 entry_low, entry_high, stop_loss, take_profit,
                 risk_reward, strategy, reasoning)
@@ -98,8 +99,12 @@ def save_signal(signal: dict) -> str:
             ),
         )
         conn.commit()
-        log.info(f"Signal saved: {sig_id} {signal['ticker']} {signal['direction']}")
-        return sig_id
+        if cur.rowcount > 0:
+            log.info(f"Signal saved: {sig_id} {signal['ticker']} {signal['direction']}")
+            return sig_id
+        else:
+            log.info(f"Signal skipped (duplicate): {signal['ticker']} {signal['date']}")
+            return ""
     except Exception as e:
         log.error(f"Failed to save signal: {e}")
         return ""
@@ -234,6 +239,8 @@ def get_holding_stats(strategy: str, confidence: int,
         "stop_rate": round(len(stop_days) / total * 100, 1),
         "expired_rate": round(expired / total * 100, 1),
         "avg_return": round(float(np.mean(pnls)), 2) if len(pnls) > 0 else 0.0,
+        "win_rate": round(float(np.sum(pnls > 0) / len(pnls) * 100), 1) if len(pnls) > 0 else 0.0,
+        "mean_days": round(float(np.mean(days)), 1),
     }
 
     if len(tp_days) >= 5:

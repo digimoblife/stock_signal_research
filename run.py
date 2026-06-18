@@ -50,13 +50,27 @@ def cmd_signal():
 
 def cmd_daily():
     """Full daily cycle: fetch new data, generate signals, send to Telegram."""
-    from fetch import fetch_all
-    from gen_signal import generate_signals
-    from track import save_signal
-    from telegram_sender import send_signal
+    from track import connect, save_signal
+    from settings import ONE_DAILY_BATCH
 
     today = datetime.now().strftime("%Y-%m-%d")
     log.info(f"=== Daily run: {today} ===")
+
+    # Batch guard: only one batch per calendar day
+    if ONE_DAILY_BATCH:
+        conn = connect()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE date = ?", (today,)
+        ).fetchone()[0]
+        conn.close()
+        if count > 0:
+            log.info("Daily batch already generated today.")
+            log.info("No new signals generated.")
+            return
+
+    from fetch import fetch_all
+    from gen_signal import generate_signals
+    from telegram_sender import send_signal
 
     # 1. Update data
     log.info("Fetching data...")

@@ -36,3 +36,7 @@ TOTAL_COST = SLIPPAGE + BROKER_FEE + STAMP_DUTY  # ~0.6% round trip
 MIN_CONFIDENCE = 50
 MAX_DAILY_SIGNALS = 3
 MIN_RISK_REWARD = 1.5
+
+# --- Paper trading controls ---
+ONE_DAILY_BATCH = True
+LONG_ONLY_MODE = True
