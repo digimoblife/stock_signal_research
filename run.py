@@ -66,14 +66,32 @@ def cmd_daily():
         count = conn.execute(
             "SELECT COUNT(*) FROM signals WHERE date = ?", (today,)
         ).fetchone()[0]
-        conn.close()
         if count > 0:
             log.info("Daily batch already generated today.")
-            log.info("No new signals generated.")
+            rows = conn.execute(
+                "SELECT * FROM signals WHERE date = ? ORDER BY ticker", (today,)
+            ).fetchall()
+            conn.close()
+            new_sigs = [dict(r) for r in rows if not r["is_duplicate"]]
+            reminders = [dict(r) for r in rows if r["is_duplicate"]]
+            lines = [f"🤖 IDX Research — {today}", "", "Signals already generated today."]
+            if new_sigs:
+                lines.append(f"")
+                lines.append(f"New signals ({len(new_sigs)}):")
+                for s in new_sigs:
+                    lines.append(f"  {s['direction']} {s['ticker']}  conf={s['confidence']}")
+            if reminders:
+                lines.append(f"")
+                lines.append(f"Reminders ({len(reminders)}):")
+                for s in reminders:
+                    lines.append(f"  {s['ticker']} — duplicate {s['direction']}")
+            from telegram_sender import send
+            send("\n".join(lines))
             # Still run paper if --paper flag
             if "--paper" in sys.argv:
                 _run_paper_cycle(today)
             return
+        conn.close()
 
     from fetch import fetch_all
     from gen_signal import generate_signals
