@@ -1,13 +1,13 @@
 """
 filter.py — signal quality filters for the volume divergence strategy.
 
-Based on empirical analysis:
-  - Baseline precision: 47.3% (no edge)
-  - Bear market × Large caps: 56.3% precision, Sharpe 1.45 (EDGE)
-  - Regime threshold is robust (2%-7% all work)
+Based on C_BALANCED analysis:
+  - No regime filter (all regimes tradeable)
+  - Min volume ratio 2.0 (stronger volume confirmation required)
+  - Large + Mid caps only (small caps excluded)
+  - No take profit (let winners run)
+  - 3× ATR stop, 15d max hold
   - Confidence 80-89 is better than 90+ (excessive volume is noise)
-
-The filters must reduce signal quantity while improving signal quality.
 """
 import logging
 from datetime import datetime, timedelta
@@ -16,7 +16,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from settings import DATA_DIR, TICKERS
+from settings import DATA_DIR, MIN_VOL_RATIO
+from universe import get_universe
 
 log = logging.getLogger("filter")
 DATA_DIR = Path(DATA_DIR)
@@ -35,7 +36,7 @@ def build_market_proxy() -> pd.DataFrame:
         return pd.read_csv(cache_path, index_col=0, parse_dates=True)
 
     returns = []
-    for ticker in TICKERS:
+    for ticker in get_universe():
         path = DATA_DIR / f"{ticker}.csv"
         if not path.exists():
             continue
@@ -100,7 +101,7 @@ def classify_liquidity(ticker: str) -> str:
 
     if _liquidity_cache is None:
         volumes = {}
-        for t in TICKERS:
+        for t in get_universe():
             path = DATA_DIR / f"{t}.csv"
             if not path.exists():
                 continue
@@ -140,12 +141,12 @@ def score_signal(row: pd.Series) -> int:
     # Price trend contribution (stronger move = more signal)
     conf += min(20, int(abs(ret_5) * 800))
 
-    # Volume confirmation: spike but NOT extreme
-    if 1.3 < vol_5 <= 2.5:
-        conf += 15   # sweet spot
+    # Volume confirmation: C_BALANCED sweet spot 2.0-2.5
+    if 2.0 <= vol_5 <= 2.5:
+        conf += 15   # sweet spot — strong but not extreme
     elif vol_5 > 2.5:
-        conf += 8    # very high volume, likely noise
-    elif 1.1 < vol_5 <= 1.3:
+        conf += 8    # very high volume, noise risk
+    elif 1.3 < vol_5 < 2.0:
         conf += 8    # modest volume increase
 
     # Consecutive divergence days bonus
@@ -174,7 +175,13 @@ def score_signal(row: pd.Series) -> int:
 def should_trade(ticker: str, signal_row: pd.Series,
                  as_of: str = None) -> tuple:
     """
-    Apply all filters to determine if a signal should be acted on.
+    Apply all filters to determine if a signal should be acted on (C_BALANCED).
+
+    C_BALANCED rules:
+      - No regime filter (trade in bull, bear, sideways)
+      - Large + Mid caps only via classify_liquidity
+      - Min volume ratio MIN_VOL_RATIO (2.0)
+      - Confidence 80-89 preferred, 90+ is noise
 
     Returns: (should_trade: bool, reason: str, adjusted_confidence: int)
     """
@@ -187,23 +194,13 @@ def should_trade(ticker: str, signal_row: pd.Series,
 
     reasons = []
 
-    # PRIMARY FILTER: regime × liquidity
-    if regime == "bear" and liquidity == "large":
-        pass  # best case, let it through
-    elif regime == "bear" and liquidity == "mid":
-        reasons.append("mid-cap in bear market (marginal)")
-        conf -= 5
-    elif regime == "bull" and liquidity == "large":
-        reasons.append("bull market — divergence unreliable on large caps")
-        conf -= 20
-    elif regime == "bull" and liquidity == "mid":
-        reasons.append("bull market — suppressing mid-cap signals")
-        return (False, "bull + mid-cap: low edge", conf)
-    elif regime == "sideways":
-        reasons.append("sideways market — high false positive rate")
-        conf -= 15
+    # VOLUME RATIO FILTER: C_BALANCED requires strong volume confirmation
+    vol_5 = signal_row.get("vol_5", 1.0)
+    if vol_5 < MIN_VOL_RATIO:
+        reasons.append(f"vol_ratio {vol_5:.1f} < {MIN_VOL_RATIO}")
+        return (False, "; ".join(reasons), conf)
 
-    # CONFIDENCE FILTER: prefer 80-89, penalize 90+
+    # CONFIDENCE FILTER: prefer 80-89, penalize 90+ (noise)
     if conf >= 90:
         reasons.append("very high confidence (may indicate noise)")
         conf -= 5
@@ -215,7 +212,10 @@ def should_trade(ticker: str, signal_row: pd.Series,
         reasons.append("confidence below threshold")
         return (False, "; ".join(reasons), conf)
 
-    return (True, "; ".join(reasons) if reasons else "all filters pass", conf)
+    # Append market context for transparency (not used for filtering)
+    reasons.append(f"regime={regime}, liquidity={liquidity}")
+
+    return (True, "; ".join(reasons), conf)
 
 
 # ── Signal augmentation ─────────────────────────────────────────

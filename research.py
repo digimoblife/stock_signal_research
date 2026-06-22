@@ -14,7 +14,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from settings import DATA_DIR, TRAIN_START, TRAIN_END, TEST_START, TOTAL_COST, TICKERS
+from settings import DATA_DIR, TRAIN_START, TRAIN_END, TEST_START, TOTAL_COST
+from universe import get_universe
 import filter
 
 log = logging.getLogger("research")
@@ -38,10 +39,22 @@ def load_ticker(ticker: str) -> pd.DataFrame:
     return df
 
 
-def load_all(start=None, end=None) -> dict[str, pd.DataFrame]:
-    """Load all tickers into a dict. Filters by date range if given."""
+def load_all(start=None, end=None, use_eligible: bool = True) -> dict[str, pd.DataFrame]:
+    """
+    Load tickers into a dict. Filters by date range if given.
+    
+    If use_eligible is True (default), only loads tickers that pass the
+    liquidity filter (MIN_PRICE / MIN_ADV). This is used by backtests
+    to match the same universe as signal generation.
+    """
     data = {}
-    for t in TICKERS:
+    if use_eligible:
+        from universe import get_eligible_tickers
+        tickers, _ = get_eligible_tickers()
+    else:
+        tickers = get_universe()
+    
+    for t in tickers:
         df = load_ticker(t)
         if df.empty:
             continue

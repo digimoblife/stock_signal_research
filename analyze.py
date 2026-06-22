@@ -23,7 +23,8 @@ from itertools import groupby
 import numpy as np
 import pandas as pd
 
-from settings import DATA_DIR, TICKERS, TOTAL_COST, TEST_START
+from settings import DATA_DIR, TOTAL_COST, TEST_START
+from universe import get_universe
 from research import load_ticker, volume_divergence_signals
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -322,7 +323,7 @@ def run():
     # 1. Load data
     print("\n[1/5] Loading data...", end=" ")
     data = {}
-    for t in TICKERS:
+    for t in get_universe():
         df = load_ticker(t)
         if not df.empty and len(df) > 100:
             data[t] = df

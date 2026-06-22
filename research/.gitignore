@@ -1,8 +1,0 @@
-# IDX Research — ignore generated data and secrets
-data/*.csv
-signals.db
-exports/
-*.pyc
-__pycache__/
-.venv/
-.env

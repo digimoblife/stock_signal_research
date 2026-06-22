@@ -8,7 +8,11 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from settings import DATA_DIR, MIN_CONFIDENCE, MAX_DAILY_SIGNALS, MIN_RISK_REWARD, TICKERS, LONG_ONLY_MODE
+from settings import (
+    DATA_DIR, MIN_CONFIDENCE, MAX_DAILY_SIGNALS, MIN_RISK_REWARD,
+    LONG_ONLY_MODE, STOP_ATR, TAKE_PROFIT_ATR, MAX_HOLD_DAYS, MIN_VOL_RATIO,
+)
+from universe import get_eligible_tickers
 from research import (
     load_ticker, volume_divergence_signals, momentum_signals,
     rsi_signals, breakout_signals,
@@ -150,7 +154,10 @@ def generate_signals(today: str = None) -> list[dict]:
     signal_func = ACTIVE_STRATEGY
     signals = []
 
-    for ticker in TICKERS:
+    tickers, counts = get_eligible_tickers()
+    log.info(f"Signal scan: {counts['eligible']} eligible / {counts['scanned']} scanned")
+
+    for ticker in tickers:
         if ticker in open_tickers:
             log.debug(f"Skipping {ticker}: open signal exists")
             continue
@@ -191,28 +198,37 @@ def generate_signals(today: str = None) -> list[dict]:
         if pd.isna(atr) or atr <= 0:
             continue
 
+        # Volume ratio filter (C_BALANCED: min 2.0)
+        idx_loc = df.index.get_loc(signal_date)
+        prev_vol = df["volume"].iloc[max(0, idx_loc-5):idx_loc].mean()
+        vol_ratio = df["volume"].iloc[idx_loc] / prev_vol if prev_vol > 0 else 0
+        if vol_ratio < MIN_VOL_RATIO:
+            continue
+
         # Entry zone: current price ± 1%
         entry_low = current_price * 0.99
         entry_high = current_price * 1.01
 
-        # Stop: 2 × ATR
+        # Stop: STOP_ATR × ATR (C_BALANCED: 3×)
         if direction == 1:  # BUY
-            stop = current_price - 2 * atr
-            tp = current_price + 4 * atr
+            stop = current_price - STOP_ATR * atr
+            tp = current_price + TAKE_PROFIT_ATR * atr if TAKE_PROFIT_ATR else None
         else:  # SELL
-            stop = current_price + 2 * atr
-            tp = current_price - 4 * atr
+            stop = current_price + STOP_ATR * atr
+            tp = current_price - TAKE_PROFIT_ATR * atr if TAKE_PROFIT_ATR else None
 
-        # Risk-reward
-        risk = abs(current_price - stop) / current_price
-        reward = abs(current_price - tp) / current_price
-        rr = reward / risk if risk > 0 else 0
-
-        if rr < MIN_RISK_REWARD:
-            continue
+        # Risk-reward (skip if no take profit)
+        if TAKE_PROFIT_ATR:
+            risk = abs(current_price - stop) / current_price
+            reward = abs(current_price - tp) / current_price
+            rr = reward / risk if risk > 0 else 0
+            if rr < MIN_RISK_REWARD:
+                continue
+        else:
+            rr = None
 
         # Confidence
-        conf = confidence_score(ACTIVE_STRATEGY, df, df.index.get_loc(signal_date))
+        conf = confidence_score(ACTIVE_STRATEGY, df, idx_loc)
 
         if conf < MIN_CONFIDENCE:
             continue
@@ -242,13 +258,14 @@ def generate_signals(today: str = None) -> list[dict]:
             "entry_low": round(entry_low, 2),
             "entry_high": round(entry_high, 2),
             "stop_loss": round(stop, 2),
-            "take_profit": round(tp, 2),
-            "risk_reward": round(rr, 2),
+            "take_profit": round(tp, 2) if tp else None,
+            "risk_reward": round(rr, 2) if rr else None,
             "reasoning": reasoning,
             "strategy": signal_func,
             "holding_stats": holding,
             "regime": regime,
             "liquidity": liq,
+            "max_hold_days": MAX_HOLD_DAYS,
             "ai_explanation": ai_explanation,
         })
 

@@ -153,6 +153,48 @@ def send_test() -> bool:
     )
 
 
+def format_t6_signal(sig: dict) -> str:
+    """Format a T6 signal for Telegram with full metadata."""
+    close = sig.get("close_at_signal", 0)
+    stop = sig.get("stop_loss", 0)
+    ma50 = sig.get("ma50", 0)
+    vol_ratio = sig.get("vol_ratio", 0)
+    atr = sig.get("atr", 0)
+    entry = sig.get("entry_price_plan", 0)
+    max_hold = sig.get("max_hold_end", "?")
+    risk_pct = abs(close - stop) / close * 100 if close > 0 else 0
+
+    lines = [
+        f"📗 T6_BUY ${sig['ticker']}  |  T6_TREND_FILTERED",
+        f"",
+        f"Signal date: {sig.get('signal_date', '?')}",
+        f"Entry plan:  next day open (~{entry:,.0f})",
+        f"",
+        f"Close:    {close:>8,.0f}",
+        f"MA50:     {ma50:>8,.0f}   {'✅ above' if close > ma50 else '❌ below'}",
+        f"Vol ratio: {vol_ratio:.2f}x  ({'✅' if vol_ratio >= 2.0 else '⚠️'})",
+        f"ATR(14):  {atr:>8,.0f}",
+        f"",
+        f"Stop:     {stop:>8,.0f}  ({risk_pct:.1f}%)",
+        f"Max hold: {max_hold} (20 trading days)",
+        f"",
+        f"Reason: {sig.get('reason', 'volume divergence signal')}",
+    ]
+
+    paper_id = sig.get("paper_trade_id", "")
+    if paper_id:
+        lines.append(f"")
+        lines.append(f"Paper ID: {paper_id}")
+
+    return "\n".join(lines)
+
+
+def send_t6_signal(sig: dict) -> bool:
+    """Format and send one T6 signal."""
+    msg = format_t6_signal(sig)
+    return send(msg)
+
+
 if __name__ == "__main__":
     import sys
 

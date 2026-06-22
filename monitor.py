@@ -20,7 +20,8 @@ from collections import defaultdict
 import pandas as pd
 import numpy as np
 
-from settings import DATA_DIR, DB_PATH, TICKERS, TOTAL_COST
+from settings import DATA_DIR, DB_PATH, TOTAL_COST
+from universe import get_universe
 
 DATA_DIR = Path(DATA_DIR)
 DB_PATH = Path(DB_PATH)
@@ -145,7 +146,8 @@ def check_data_files(report):
     stale = []
     empty = []
 
-    for ticker in TICKERS:
+    tickers = get_universe()
+    for ticker in tickers:
         path = DATA_DIR / f"{ticker}.csv"
         if not path.exists():
             missing.append(ticker)
@@ -167,7 +169,7 @@ def check_data_files(report):
         if business_days_ago > 10:
             stale.append(f"{ticker} (last: {last_date.date()}, {business_days_ago} days ago)")
 
-    total = len(TICKERS)
+    total = len(tickers)
     if missing:
         report.add("Data files", "FAIL", f"Missing: {', '.join(missing)}")
     elif tickers_with_data < total * 0.8:

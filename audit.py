@@ -13,7 +13,8 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
-from settings import DATA_DIR, TICKERS, TOTAL_COST, TEST_START
+from settings import DATA_DIR, TOTAL_COST, TEST_START
+from universe import get_universe
 from research import load_ticker
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -95,12 +96,13 @@ def run():
     print_separator("ROBUSTNESS AUDIT: BEAR × LARGE CAP STRATEGY")
     print("  Auditing claim: Volume divergence on large caps during bear markets")
     print(f"  Test period: {TEST_START} to present")
-    print(f"  Universe: {len(TICKERS)} stocks")
+    tickers = get_universe()
+    print(f"  Universe: {len(tickers)} stocks")
 
     # ── 0. Load & compute ────────────────────────────────────
     print("\n[0] Loading data...")
     data = {}
-    for t in TICKERS:
+    for t in tickers:
         df = load_ticker(t)
         if not df.empty and len(df) > 100:
             data[t] = df

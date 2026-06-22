@@ -10,7 +10,8 @@ from datetime import datetime
 import pandas as pd
 import yfinance as yf
 
-from settings import TICKERS, START_DATE, DATA_DIR
+from settings import START_DATE, DATA_DIR
+from universe import get_universe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("fetch")
@@ -104,11 +105,12 @@ def validate_one(ticker: str, df: pd.DataFrame) -> list[str]:
 
 
 def fetch_all():
-    """Download all tickers. Validate. Print summary."""
+    """Download all tickers from configured universe. Validate. Print summary."""
     ok = 0
     failed = 0
+    tickers = get_universe()
 
-    for ticker in TICKERS:
+    for ticker in tickers:
         log.info(f"Fetching {ticker}...")
         df = fetch_one(ticker)
 
