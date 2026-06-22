@@ -1,8 +1,10 @@
-# IDX Research — ignore generated data and secrets
-data/*.csv
-signals.db
-exports/
-*.pyc
-__pycache__/
+.DS_Store
 .venv/
+__pycache__/
+*.pyc
 .env
+data/*.csv
+data/.market_proxy.csv
+signals.db
+paper_trades.db
+exports/
