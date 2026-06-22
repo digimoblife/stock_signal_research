@@ -64,12 +64,14 @@ def format_signal(s: dict, signal_id: str = "") -> str:
     emoji = "📈" if s["direction"] == "BUY" else "📉"
     risk_pct = abs(s["entry_high"] - s["stop_loss"]) / s["entry_high"] * 100
 
+    tp_str = f"{s['take_profit']:,.0f}" if s['take_profit'] is not None else "None"
+    rr_str = f"{s['risk_reward']:.1f}" if s['risk_reward'] is not None else "None"
     lines = [
         f"{emoji} {s['direction']} ${s['ticker']}  |  Confidence: {s['confidence']}/100",
         f"",
         f"Entry: {s['entry_low']:,.0f} – {s['entry_high']:,.0f}",
         f"Stop:  {s['stop_loss']:,.0f}  ({risk_pct:.1f}%)",
-        f"TP:    {s['take_profit']:,.0f}  |  R:R: {s['risk_reward']:.1f}",
+        f"TP:    {tp_str}  |  R:R: {rr_str}",
         f"",
         f"{s['reasoning']}",
     ]
@@ -142,6 +144,52 @@ def format_performance(perf: dict) -> str:
 def send_signal(signal: dict, signal_id: str) -> bool:
     """Format and send one signal."""
     msg = format_signal(signal, signal_id)
+    return send(msg)
+
+
+def format_signal_reminder(signal: dict, previous: dict | None = None) -> str:
+    """Format a simplified reminder message for duplicate signals."""
+    ticker = signal["ticker"]
+    direction = signal.get("direction", "BUY")
+    close = signal.get("entry_high", 0)
+    stop = signal.get("stop_loss", 0)
+    atr = abs(close - stop) if close and stop else 0
+
+    lines = [
+        f"BUY SIGNAL REMINDER",
+        f"",
+        f"Ticker: {ticker}",
+        f"Signal: {direction} again",
+        f"Date: {signal.get('date', '?')}",
+        f"",
+        f"This ticker already has a recent {direction} signal.",
+        f"Treat this as confirmation/reminder, not a new automatic entry.",
+        f"",
+        f"Current snapshot:",
+        f"Close: {close:,.0f}",
+        f"Stop loss reference: {stop:,.0f}",
+        f"ATR: {atr:,.0f}",
+        f"Confidence: {signal.get('confidence', '?')}/100",
+    ]
+
+    vol = signal.get("vol_ratio") or signal.get("volume_ratio")
+    if vol:
+        lines.append(f"Volume ratio: {vol:.2f}x")
+
+    prev_id = signal.get("duplicate_of", "")
+    if prev_id:
+        lines.append(f"Previous signal: {prev_id}")
+
+    lines.append(f"")
+    lines.append(f"Suggested action:")
+    lines.append(f"Review existing position and risk. Avoid adding more unless planned.")
+
+    return "\n".join(lines)
+
+
+def send_signal_reminder(signal: dict, previous: dict | None = None) -> bool:
+    """Format and send a duplicate signal reminder."""
+    msg = format_signal_reminder(signal, previous)
     return send(msg)
 
 

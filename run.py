@@ -77,7 +77,7 @@ def cmd_daily():
 
     from fetch import fetch_all
     from gen_signal import generate_signals
-    from telegram_sender import send_signal
+    from telegram_sender import send_signal, send_signal_reminder
 
     # 1. Update data
     log.info("Fetching data...")
@@ -94,12 +94,24 @@ def cmd_daily():
         send(f"🤖 IDX Research — {today}\n\n{msg}")
     else:
         # 3. Save and send each signal
+        new_count = 0
+        reminder_count = 0
         for sig in signals:
             signal_id = save_signal(sig)
-            if signal_id:
+            if not signal_id:
+                continue
+            if sig.get("is_duplicate"):
+                log.info(f"Sending reminder for {sig['ticker']}")
+                ok = send_signal_reminder(sig)
+                if ok:
+                    reminder_count += 1
+                else:
+                    log.error(f"Telegram failed for {signal_id}")
+            else:
+                log.info(f"Sending new signal: {signal_id}")
                 ok = send_signal(sig, signal_id)
                 if ok:
-                    log.info(f"Sent: {signal_id}")
+                    new_count += 1
                 else:
                     log.error(f"Telegram failed for {signal_id}")
 
@@ -107,7 +119,7 @@ def cmd_daily():
     if "--paper" in sys.argv:
         _run_paper_cycle(today)
 
-    log.info(f"Done: {len(signals)} signals sent")
+    log.info(f"Done: {new_count} new signals, {reminder_count} reminders sent")
 
 
 def cmd_paper():

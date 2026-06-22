@@ -14,19 +14,22 @@ log = logging.getLogger("track")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
-    id          TEXT PRIMARY KEY,
-    ticker      TEXT NOT NULL,
-    date        TEXT NOT NULL,
-    direction   TEXT NOT NULL CHECK(direction IN ('BUY','SELL','HOLD')),
-    confidence  INTEGER DEFAULT 50,
-    entry_low   REAL,
-    entry_high  REAL,
-    stop_loss   REAL,
-    take_profit REAL,
-    risk_reward REAL,
-    strategy    TEXT,
-    reasoning   TEXT,
-    created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+    id              TEXT PRIMARY KEY,
+    ticker          TEXT NOT NULL,
+    date            TEXT NOT NULL,
+    direction       TEXT NOT NULL CHECK(direction IN ('BUY','SELL','HOLD')),
+    confidence      INTEGER DEFAULT 50,
+    entry_low       REAL,
+    entry_high      REAL,
+    stop_loss       REAL,
+    take_profit     REAL,
+    risk_reward     REAL,
+    strategy        TEXT,
+    reasoning       TEXT,
+    created_at      TEXT DEFAULT (datetime('now', 'localtime')),
+    is_duplicate    INTEGER DEFAULT 0,
+    duplicate_of    TEXT,
+    signal_type     TEXT DEFAULT 'NEW'
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -98,6 +101,9 @@ def _migrate(conn):
         "ALTER TABLE trades ADD COLUMN strategy TEXT",
         "ALTER TABLE trades ADD COLUMN confidence INTEGER",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_ticker_date ON signals(ticker, date)",
+        "ALTER TABLE signals ADD COLUMN is_duplicate INTEGER DEFAULT 0",
+        "ALTER TABLE signals ADD COLUMN duplicate_of TEXT",
+        "ALTER TABLE signals ADD COLUMN signal_type TEXT DEFAULT 'NEW'",
     ]
     for sql in migrations:
         try:
@@ -110,6 +116,7 @@ def _migrate(conn):
 def save_signal(signal: dict) -> str:
     """Save a signal to the database. Returns signal ID."""
     sig_id = f"SIG-{signal['date'].replace('-', '')}-{uuid.uuid4().hex[:4].upper()}"
+    is_dup = signal.get("is_duplicate", 0)
 
     conn = connect()
     try:
@@ -117,21 +124,25 @@ def save_signal(signal: dict) -> str:
             """INSERT OR IGNORE INTO signals
                (id, ticker, date, direction, confidence,
                 entry_low, entry_high, stop_loss, take_profit,
-                risk_reward, strategy, reasoning)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                risk_reward, strategy, reasoning,
+                is_duplicate, duplicate_of, signal_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?)""",
             (
                 sig_id, signal["ticker"], signal["date"], signal["direction"],
                 signal["confidence"], signal["entry_low"], signal["entry_high"],
                 signal["stop_loss"], signal["take_profit"], signal["risk_reward"],
                 signal.get("strategy", ""), signal.get("reasoning", ""),
+                is_dup, signal.get("duplicate_of", ""), signal.get("signal_type", "NEW"),
             ),
         )
         conn.commit()
         if cur.rowcount > 0:
-            log.info(f"Signal saved: {sig_id} {signal['ticker']} {signal['direction']}")
+            tag = "REMINDER" if is_dup else "NEW"
+            log.info(f"Signal saved [{tag}]: {sig_id} {signal['ticker']} {signal['direction']}")
             return sig_id
         else:
-            log.info(f"Signal skipped (duplicate): {signal['ticker']} {signal['date']}")
+            log.info(f"Signal skipped (already exists today): {signal['ticker']} {signal['date']}")
             return ""
     except Exception as e:
         log.error(f"Failed to save signal: {e}")
@@ -170,13 +181,14 @@ def save_trade(trade: dict) -> str:
 
 
 def get_open_signals() -> list[dict]:
-    """Get signals without a completed trade."""
+    """Get non-duplicate signals without a completed trade."""
     conn = connect()
     try:
         rows = conn.execute(
             """SELECT s.* FROM signals s
                LEFT JOIN trades t ON s.id = t.signal_id
                WHERE t.id IS NULL
+               AND (s.is_duplicate IS NULL OR s.is_duplicate = 0)
                ORDER BY s.date DESC"""
         ).fetchall()
         return [dict(r) for r in rows]
@@ -388,6 +400,22 @@ def update_paper_trade(trade_id: str, updates: dict):
         conn.commit()
     except Exception as e:
         log.error(f"Failed to update paper trade {trade_id}: {e}")
+    finally:
+        conn.close()
+
+
+def get_previous_signal(ticker: str, direction: str = "BUY") -> dict | None:
+    """Get the most recent non-duplicate signal for a ticker (same direction)."""
+    conn = connect()
+    try:
+        row = conn.execute(
+            """SELECT * FROM signals
+               WHERE ticker = ? AND direction = ?
+               AND (is_duplicate IS NULL OR is_duplicate = 0)
+               ORDER BY date DESC LIMIT 1""",
+            (ticker, direction),
+        ).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()
 

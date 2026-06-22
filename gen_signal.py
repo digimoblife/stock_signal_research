@@ -19,7 +19,7 @@ from research import (
 )
 import filter
 from filter import should_trade, get_market_regime, classify_liquidity, augment_signal
-from track import get_holding_stats, get_open_signals
+from track import get_holding_stats, get_open_signals, get_previous_signal
 from ai_explain import generate_signal_explanation
 
 log = logging.getLogger("signal")
@@ -141,10 +141,10 @@ def generate_signals(today: str = None) -> list[dict]:
 
     today_dt = today if isinstance(today, datetime) else datetime.now()
 
-    # Load tickers with existing open signals — block duplicates
+    # Load tickers with existing open signals — detect duplicates
     open_tickers = {s["ticker"] for s in get_open_signals()}
     if open_tickers:
-        log.info(f"Tickers with open signals (skipped): {sorted(open_tickers)}")
+        log.info(f"Tickers with open signals: {sorted(open_tickers)}")
 
     strategy_func = STRATEGY_MAP.get(ACTIVE_STRATEGY)
     if not strategy_func:
@@ -153,14 +153,13 @@ def generate_signals(today: str = None) -> list[dict]:
 
     signal_func = ACTIVE_STRATEGY
     signals = []
+    reminders = []
 
     tickers, counts = get_eligible_tickers()
     log.info(f"Signal scan: {counts['eligible']} eligible / {counts['scanned']} scanned")
 
     for ticker in tickers:
-        if ticker in open_tickers:
-            log.debug(f"Skipping {ticker}: open signal exists")
-            continue
+        is_duplicate = ticker in open_tickers
 
         df = load_ticker(ticker)
         if df.empty or len(df) < 60:
@@ -250,7 +249,7 @@ def generate_signals(today: str = None) -> list[dict]:
                                        holding=holding, regime=regime, liquidity=liq)
         ai_explanation = generate_signal_explanation(ai_context)
 
-        signals.append({
+        sig = {
             "ticker": ticker,
             "date": today_dt.strftime("%Y-%m-%d"),
             "direction": "BUY" if direction == 1 else "SELL",
@@ -267,13 +266,28 @@ def generate_signals(today: str = None) -> list[dict]:
             "liquidity": liq,
             "max_hold_days": MAX_HOLD_DAYS,
             "ai_explanation": ai_explanation,
-        })
+            "is_duplicate": 0,
+            "duplicate_of": "",
+            "signal_type": "NEW",
+        }
 
-    # Sort by confidence
+        if is_duplicate:
+            sig["is_duplicate"] = 1
+            sig["signal_type"] = "REMINDER"
+            prev = get_previous_signal(ticker, sig["direction"])
+            if prev:
+                sig["duplicate_of"] = prev["id"]
+            log.info(f"{ticker} duplicate {sig['direction']} signal detected — sending reminder")
+            reminders.append(sig)
+        else:
+            signals.append(sig)
+
+    # Sort new signals by confidence, limit to max daily
     signals.sort(key=lambda s: s["confidence"], reverse=True)
-
-    # Limit to max daily
     signals = signals[:MAX_DAILY_SIGNALS]
+
+    # Reminders bypass the daily limit — always send
+    signals.extend(reminders)
 
     return signals
 
