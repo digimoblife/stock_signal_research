@@ -76,10 +76,20 @@ def cmd_daily():
             reminders = [dict(r) for r in rows if r["is_duplicate"]]
             lines = [f"🤖 IDX Research — {today}", "", "Signals already generated today."]
             if new_sigs:
+                from track import get_holding_stats
                 lines.append(f"")
                 lines.append(f"New signals ({len(new_sigs)}):")
                 for s in new_sigs:
-                    lines.append(f"  {s['direction']} {s['ticker']}  conf={s['confidence']}")
+                    tp = f"{s['take_profit']:,.0f}" if s['take_profit'] else "none"
+                    risk = abs(s['entry_high'] - s['stop_loss']) / s['entry_high'] * 100 if s['entry_high'] else 0
+                    stats = get_holding_stats(s.get("strategy", "volume_divergence"), s["confidence"])
+                    lines.append(f"")
+                    lines.append(f"  {s['direction']} {s['ticker']}  |  Confidence: {s['confidence']}/100")
+                    lines.append(f"  Entry: {s['entry_low']:,.0f} – {s['entry_high']:,.0f}")
+                    lines.append(f"  Stop:  {s['stop_loss']:,.0f}  ({risk:.1f}%)")
+                    lines.append(f"  TP:    {tp}")
+                    if stats:
+                        lines.append(f"  Avg hold: {stats['mean_days']} days  (P25–P75: {stats['resolution_p25']}–{stats['resolution_p75']}d)")
             if reminders:
                 lines.append(f"")
                 lines.append(f"Reminders ({len(reminders)}):")
