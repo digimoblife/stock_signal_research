@@ -61,20 +61,26 @@ def send(text: str) -> bool:
 
 def format_signal(s: dict, signal_id: str = "") -> str:
     """Format a signal for Telegram. Designed for quick scanning."""
-    emoji = "📈" if s["direction"] == "BUY" else "📉"
+    style_label = s.get("style_label") or ("⚡ Scalping Signal (1–5 Days)" if s.get("max_hold_days", 15) <= 5 else "📈 Swing Signal (10–20 Days)")
+    badge = "⚡ [SCALPING BUY]" if "SCALPING" in style_label.upper() else "📈 [SWING BUY]"
+    if s["direction"] == "SELL":
+        badge = "📉 [SELL SIGNAL]"
+
     risk_pct = abs(s["entry_high"] - s["stop_loss"]) / s["entry_high"] * 100
 
-    tp_str = f"{s['take_profit']:,.0f}" if s['take_profit'] is not None else "None"
-    rr_str = f"{s['risk_reward']:.1f}" if s['risk_reward'] is not None else "None"
+    tp_str = f"{s['take_profit']:,.0f}" if s['take_profit'] is not None else "None (Trailing Stop)"
+    rr_str = f"{s['risk_reward']:.1f}" if s['risk_reward'] is not None else "N/A"
     lines = [
-        f"{emoji} {s['direction']} ${s['ticker']}  |  Confidence: {s['confidence']}/100",
+        f"{badge} ${s['ticker']}  |  Confidence: {s['confidence']}/100",
+        f"Timeframe: {style_label}",
         f"",
-        f"Entry: {s['entry_low']:,.0f} – {s['entry_high']:,.0f}",
-        f"Stop:  {s['stop_loss']:,.0f}  ({risk_pct:.1f}%)",
-        f"TP:    {tp_str}  |  R:R: {rr_str}",
+        f"Entry Zone: {s['entry_low']:,.0f} – {s['entry_high']:,.0f}",
+        f"Stop Loss:  {s['stop_loss']:,.0f}  ({risk_pct:.1f}%)",
+        f"Take Profit: {tp_str}  |  R:R: {rr_str}",
         f"",
         f"{s['reasoning']}",
     ]
+
 
     # AI explanation
     ai = s.get("ai_explanation", "")

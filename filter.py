@@ -87,6 +87,72 @@ def get_market_regime(lookback: int = 20, threshold: float = 0.03,
         return "sideways"
 
 
+def is_market_bullish(as_of: str = None, ma_period: int = 50) -> bool:
+    """
+    Check if the market benchmark (IHSG or market proxy) is above its MA50.
+    Used for T6_USE_MARKET_FILTER.
+    """
+    if as_of is None:
+        as_of = datetime.now().strftime("%Y-%m-%d")
+
+    ihsg_path = DATA_DIR / "IHSG.csv"
+    if ihsg_path.exists():
+        df = pd.read_csv(ihsg_path, index_col=0, parse_dates=True)
+        df = df[df.index <= as_of]
+        if len(df) >= ma_period:
+            ma50 = df["close"].rolling(ma_period).mean().iloc[-1]
+            close = df["close"].iloc[-1]
+            return not pd.isna(ma50) and close >= ma50
+
+    proxy = build_market_proxy()
+    if proxy.empty:
+        return True
+    proxy = proxy[proxy.index <= as_of]
+    if len(proxy) < ma_period:
+        return True
+
+    cumulative = (1 + proxy["market_ret"]).cumprod()
+    ma50 = cumulative.rolling(ma_period).mean().iloc[-1]
+    close = cumulative.iloc[-1]
+    return not pd.isna(ma50) and close >= ma50
+
+
+def compute_relative_strength(ticker: str, as_of: str = None, window: int = 20) -> float:
+    """
+    Compute Relative Strength vs IHSG benchmark over a rolling window.
+    RS_20 = (1 + stock_ret) / (1 + market_ret)
+    """
+    if as_of is None:
+        as_of = datetime.now().strftime("%Y-%m-%d")
+
+    ticker_path = DATA_DIR / f"{ticker}.csv"
+    if not ticker_path.exists():
+        return 1.0
+
+    df_stock = pd.read_csv(ticker_path, index_col=0, parse_dates=True)
+    df_stock = df_stock[df_stock.index <= as_of]
+    if len(df_stock) < window + 1:
+        return 1.0
+
+    stock_ret = (df_stock["close"].iloc[-1] / df_stock["close"].iloc[-window - 1]) - 1.0
+
+    ihsg_path = DATA_DIR / "IHSG.csv"
+    if ihsg_path.exists():
+        df_mkt = pd.read_csv(ihsg_path, index_col=0, parse_dates=True)
+        df_mkt = df_mkt[df_mkt.index <= as_of]
+        if len(df_mkt) >= window + 1:
+            mkt_ret = (df_mkt["close"].iloc[-1] / df_mkt["close"].iloc[-window - 1]) - 1.0
+        else:
+            mkt_ret = 0.0
+    else:
+        proxy = build_market_proxy()
+        proxy = proxy[proxy.index <= as_of]
+        mkt_ret = proxy["market_ret"].tail(window).sum() if len(proxy) >= window else 0.0
+
+    return (1.0 + stock_ret) / (1.0 + mkt_ret) if (1.0 + mkt_ret) > 0 else 1.0
+
+
+
 # ── Liquidity classification ────────────────────────────────────
 
 _liquidity_cache = None
@@ -161,6 +227,14 @@ def score_signal(row: pd.Series) -> int:
     elif ret_5 > 0 and vol_5 < 0.8:
         conf += 5    # bearish divergence confirmed
 
+    # Foreign flow / Bandarmology bonus
+    if row.get("foreign_flow_positive", False):
+        try:
+            from settings import T6_FOREIGN_FLOW_BONUS
+            conf += T6_FOREIGN_FLOW_BONUS
+        except ImportError:
+            conf += 15
+
     # Penalty: noise indicators
     if vol_5 > 5.0:
         conf -= 25   # extreme volume = data error or one-time event
@@ -175,22 +249,40 @@ def score_signal(row: pd.Series) -> int:
 def should_trade(ticker: str, signal_row: pd.Series,
                  as_of: str = None) -> tuple:
     """
-    Apply all filters to determine if a signal should be acted on (C_BALANCED).
+    Apply all filters to determine if a signal should be acted on (C_BALANCED / T6).
 
-    C_BALANCED rules:
-      - No regime filter (trade in bull, bear, sideways)
+    Rules:
+      - Market filter (IHSG > MA50 if T6_USE_MARKET_FILTER enabled)
+      - Relative Strength vs IHSG >= T6_MIN_RS20 (1.05)
       - Large + Mid caps only via classify_liquidity
       - Min volume ratio MIN_VOL_RATIO (2.0)
-      - Confidence 80-89 preferred, 90+ is noise
+      - Confidence scoring with Foreign Flow bonus
 
     Returns: (should_trade: bool, reason: str, adjusted_confidence: int)
     """
     if as_of is None:
         as_of = datetime.now().strftime("%Y-%m-%d")
 
+    reasons = []
+
+    # MARKET TREND FILTER (IHSG > MA50)
+    try:
+        from settings import T6_USE_MARKET_FILTER, T6_MIN_RS20
+        if T6_USE_MARKET_FILTER and not is_market_bullish(as_of=as_of):
+            reasons.append("IHSG market trend is below MA50")
+            return (False, "; ".join(reasons), 0)
+
+        rs20 = compute_relative_strength(ticker, as_of=as_of)
+        if rs20 < T6_MIN_RS20:
+            reasons.append(f"Relative strength {rs20:.2f} < {T6_MIN_RS20:.2f}")
+            return (False, "; ".join(reasons), 0)
+    except ImportError:
+        pass
+
     regime = get_market_regime(as_of=as_of)
     liquidity = classify_liquidity(ticker)
     conf = score_signal(signal_row)
+
 
     reasons = []
 

@@ -151,9 +151,11 @@ def cmd_daily():
 
 
 def cmd_paper():
-    """Run T6 paper trading cycle only."""
+    """Run T6 paper trading cycle only (supports --preclose for 15:30 WIB pre-close scan)."""
     today = datetime.now().strftime("%Y-%m-%d")
-    log.info(f"=== T6 Paper cycle: {today} ===")
+    is_preclose = "--preclose" in sys.argv
+    tag = " (Pre-close 15:30 WIB)" if is_preclose else ""
+    log.info(f"=== T6 Paper cycle{tag}: {today} ===")
 
     from settings import T6_ENABLED
     if not T6_ENABLED:
@@ -161,6 +163,7 @@ def cmd_paper():
         return
 
     _run_paper_cycle(today)
+
 
 
 def _run_paper_cycle(today: str):

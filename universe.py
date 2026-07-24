@@ -61,6 +61,19 @@ KOMPAS100 = sorted([
     "UNTR", "UNVR", "WIFI", "WIRG",
 ])
 
+# IDX200 — Expanded 200+ Liquid Stock Universe
+IDX200 = sorted(list(set(KOMPAS100 + [
+    "AGRO", "AUTO", "BACA", "BANK", "BBHI", "BDMN", "BEST", "BHIT", "BIRD",
+    "BJBR", "BJTM", "BMTR", "BNGA", "BNLI", "BSIM", "BTPN", "CASA", "CENT",
+    "CITA", "CLEO", "DILD", "DMAS", "DOID", "DRMA", "DUTI", "FAST", "FISH",
+    "FPNI", "GJTL", "GOOD", "IGAR", "IMAS", "INAF", "INPP", "IPCC", "IRRA",
+    "KAEF", "KBLI", "KINO", "LINK", "LPCK", "LPKR", "LTLS", "MAIN", "MASA",
+    "MCAS", "MCOL", "MDLN", "MLBI", "MLIA", "MPMX", "MTLA", "NISP", "PALM",
+    "PEHA", "PPRO", "PRDA", "RALS", "RDTX", "ROTI", "SAME", "SAMF", "SILO",
+    "SIMP", "SMBR", "SMSM", "SPTO", "SRTG", "SSMS", "STAA", "TBIG", "TKIM",
+    "TOTL", "TSPC", "ULTJ", "UNIC", "VICI", "WOOD", "ZINC",
+])))
+
 # ── Validate index constituent counts ────────────────────────────
 
 _EXPECTED_COUNTS = {"LQ45": 45, "IDX80": 80, "KOMPAS100": 100}
@@ -78,8 +91,10 @@ UNIVERSE_MAP = {
     "lq45": LQ45,
     "idx80": IDX80,
     "kompas100": KOMPAS100,
+    "idx200": IDX200,
     "custom": None,  # loaded from settings.TICKERS at runtime
 }
+
 
 
 def get_universe(name: str = None):

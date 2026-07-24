@@ -208,21 +208,35 @@ def generate_signals(today: str = None) -> list[dict]:
         entry_low = current_price * 0.99
         entry_high = current_price * 1.01
 
-        # Stop: STOP_ATR × ATR (C_BALANCED: 3×)
-        if direction == 1:  # BUY
-            stop = current_price - STOP_ATR * atr
-            tp = current_price + TAKE_PROFIT_ATR * atr if TAKE_PROFIT_ATR else None
-        else:  # SELL
-            stop = current_price + STOP_ATR * atr
-            tp = current_price - TAKE_PROFIT_ATR * atr if TAKE_PROFIT_ATR else None
+        # Determine Scalping vs Swing style
+        ma50 = df["close"].rolling(50).mean().iloc[-1] if len(df) >= 50 else None
+        is_above_ma50 = not pd.isna(ma50) and current_price >= ma50
 
-        # Risk-reward (skip if no take profit)
-        if TAKE_PROFIT_ATR:
+        from settings import (
+            SCALPING_MAX_HOLD_DAYS, SCALPING_STOP_ATR, SCALPING_TAKE_PROFIT_ATR, SCALPING_MIN_VOL_RATIO,
+            SWING_MAX_HOLD_DAYS, SWING_STOP_ATR, SWING_MIN_VOL_RATIO
+        )
+
+        if is_above_ma50 and vol_ratio >= SWING_MIN_VOL_RATIO:
+            style = "SWING"
+            style_label = "📈 Swing Signal (10–20 Days)"
+            max_hold = SWING_MAX_HOLD_DAYS
+            stop = current_price - SWING_STOP_ATR * atr if direction == 1 else current_price + SWING_STOP_ATR * atr
+            tp = None
+        else:
+            if vol_ratio < SCALPING_MIN_VOL_RATIO:
+                continue
+            style = "SCALPING"
+            style_label = "⚡ Scalping Signal (1–5 Days)"
+            max_hold = SCALPING_MAX_HOLD_DAYS
+            stop = current_price - SCALPING_STOP_ATR * atr if direction == 1 else current_price + SCALPING_STOP_ATR * atr
+            tp = current_price + SCALPING_TAKE_PROFIT_ATR * atr if direction == 1 else current_price - SCALPING_TAKE_PROFIT_ATR * atr
+
+        # Risk-reward calculation
+        if tp:
             risk = abs(current_price - stop) / current_price
             reward = abs(current_price - tp) / current_price
             rr = reward / risk if risk > 0 else 0
-            if rr < MIN_RISK_REWARD:
-                continue
         else:
             rr = None
 
@@ -234,9 +248,9 @@ def generate_signals(today: str = None) -> list[dict]:
 
         # Reasoning string
         if direction == 1:
-            reasoning = f"{signal_func.replace('_', ' ').title()}: bullish signal detected"
+            reasoning = f"{style_label}: {signal_func.replace('_', ' ').title()} bullish signal"
         else:
-            reasoning = f"{signal_func.replace('_', ' ').title()}: bearish signal detected"
+            reasoning = f"{style_label}: {signal_func.replace('_', ' ').title()} bearish signal"
 
         # Attach holding period stats, regime, liquidity
         holding = get_holding_stats(ACTIVE_STRATEGY, conf)
@@ -253,6 +267,8 @@ def generate_signals(today: str = None) -> list[dict]:
             "ticker": ticker,
             "date": today_dt.strftime("%Y-%m-%d"),
             "direction": "BUY" if direction == 1 else "SELL",
+            "style": style,
+            "style_label": style_label,
             "confidence": conf,
             "entry_low": round(entry_low, 2),
             "entry_high": round(entry_high, 2),
@@ -264,12 +280,13 @@ def generate_signals(today: str = None) -> list[dict]:
             "holding_stats": holding,
             "regime": regime,
             "liquidity": liq,
-            "max_hold_days": MAX_HOLD_DAYS,
+            "max_hold_days": max_hold,
             "ai_explanation": ai_explanation,
             "is_duplicate": 0,
             "duplicate_of": "",
             "signal_type": "NEW",
         }
+
 
         if is_duplicate:
             sig["is_duplicate"] = 1

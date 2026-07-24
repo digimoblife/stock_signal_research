@@ -11,19 +11,47 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # --- Stock universe ---
-# Options for STOCK_UNIVERSE: 'lq45', 'idx80', 'kompas100', 'custom'
-# 'custom' uses the TICKERS list below (legacy behavior).
-STOCK_UNIVERSE = "custom"
+# Options for STOCK_UNIVERSE: 'lq45', 'idx80', 'kompas100', 'idx200', 'custom'
+STOCK_UNIVERSE = "idx200"
 
 TICKERS = [
-    "BBCA", "BBRI", "BMRI", "BBNI", "TLKM",
-    "ASII", "ADRO", "ICBP", "INDF", "UNVR",
-    "GGRM", "HMSP", "KLBF", "SMGR", "PGAS",
+    "AADI", "ACES", "ADMR", "ADRO", "AGRO", "AKRA", "AMMN", "AMRT", "ANTM", "ARCI",
+    "ARTO", "ASII", "AUTO", "BACA", "BANK", "BBCA", "BBHI", "BBNI", "BBRI", "BBTN",
+    "BBYB", "BDMN", "BEST", "BHIT", "BIRD", "BJBR", "BJTM", "BKSL", "BMRI", "BMTR",
+    "BNGA", "BNLI", "BREN", "BRIS", "BRMS", "BRPT", "BSDE", "BSIM", "BTPN", "BTPS",
+    "BUKA", "BULL", "BUMI", "BUVA", "CASA", "CBDK", "CENT", "CITA", "CLEO", "CMRY",
+    "CPIN", "CTRA", "CUAN", "DEWA", "DILD", "DMAS", "DOID", "DRMA", "DSNG", "DSSA",
+    "DUTI", "ELSA", "EMTK", "ENRG", "ERAA", "ESSA", "EXCL", "FAST", "FILM", "FISH",
+    "FPNI", "GGRM", "GJTL", "GOOD", "GOTO", "HEAL", "HMSP", "HRTA", "HRUM", "ICBP",
+    "IGAR", "IMAS", "IMPC", "INAF", "INCO", "INDF", "INDY", "INET", "INKP", "INPP",
+    "INTP", "IPCC", "IRRA", "ISAT", "ITMG", "JPFA", "JSMR", "KAEF", "KBLI", "KIJA",
+    "KINO", "KLBF", "KPIG", "LINK", "LPCK", "LPKR", "LTLS", "MAIN", "MAPA", "MAPI",
+    "MASA", "MBMA", "MCAS", "MCOL", "MDKA", "MDLN", "MEDC", "MIKA", "MLBI", "MLIA",
+    "MPMX", "MTEL", "MTLA", "MYOR", "NCKL", "NISP", "PALM", "PANI", "PEHA", "PGAS",
+    "PGEO", "PNLF", "PPRO", "PRDA", "PSAB", "PTBA", "PTRO", "PWON", "RAJA", "RALS",
+    "RATU", "RDTX", "ROTI", "SAME", "SAMF", "SCMA", "SGER", "SIDO", "SILO", "SIMP",
+    "SMBR", "SMGR", "SMIL", "SMRA", "SMSM", "SPTO", "SRTG", "SSIA", "SSMS", "STAA",
+    "TAPG", "TBIG", "TCPI", "TINS", "TKIM", "TLKM", "TOBA", "TOTL", "TOWR", "TPIA",
+    "TSPC", "ULTJ", "UNIC", "UNTR", "UNVR", "VICI", "WIFI", "WIRG", "WOOD", "ZINC"
 ]
 
+
 # --- Liquidity filter thresholds ---
-MIN_PRICE = 500           # Minimum latest close price (IDR)
+MIN_PRICE = 50            # Minimum latest close price (IDR) — allows penny stocks down to Rp 50
 MIN_ADV = 5_000_000_000   # Minimum average daily value over 20d (IDR)
+
+# --- Dual Signal Types: Scalping vs Swing ---
+SCALPING_ENABLED = True
+SCALPING_MAX_HOLD_DAYS = 5
+SCALPING_STOP_ATR = 1.5
+SCALPING_TAKE_PROFIT_ATR = 2.5
+SCALPING_MIN_VOL_RATIO = 1.3
+
+SWING_ENABLED = True
+SWING_MAX_HOLD_DAYS = 20
+SWING_STOP_ATR = 3.0
+SWING_MIN_VOL_RATIO = 2.0
+
 
 # Where data lives
 DATA_DIR = "data"
@@ -60,9 +88,10 @@ MIN_VOL_RATIO = 2.0         # Minimum volume ratio for signal consideration
 ONE_DAILY_BATCH = True
 LONG_ONLY_MODE = True
 
-# --- T6_TREND_FILTERED strategy (IDX80) ---
+# --- T6_TREND_FILTERED strategy (IDX200) ---
 T6_ENABLED = True
-T6_STOCK_UNIVERSE = "idx80"
+T6_STOCK_UNIVERSE = "idx200"
+
 T6_STOP_ATR = 3.0
 T6_TAKE_PROFIT_ATR = None
 T6_MAX_HOLD_DAYS = 20
@@ -72,5 +101,21 @@ T6_MAX_POSITIONS = 10
 T6_STARTING_CAPITAL = 100_000_000
 T6_COST_PER_TRADE = 0.006
 
+# --- T6 Enhancements (Quality Filters, Dynamic Exits, Risk Parity) ---
+T6_USE_MARKET_FILTER = True          # Require IHSG > MA50
+T6_MARKET_MA_PERIOD = 50
+T6_MIN_RS20 = 1.05                   # Stock 20d return beat IHSG by >= 5%
+T6_FOREIGN_FLOW_ENABLED = True
+T6_FOREIGN_FLOW_BONUS = 15           # Confidence score bonus for 5d foreign net buy
+
+T6_PARTIAL_TP_ENABLED = True         # Partial profit taking (50% position)
+T6_PARTIAL_TP_ATR_MULT = 2.0         # Sell 50% at +2.0 ATR
+T6_TRAILING_STOP_ENABLED = True
+T6_TRAILING_STOP_ATR_MULT = 2.2      # Trail distance: High Water Mark - 2.2 ATR
+
+T6_RISK_PARITY_ENABLED = True        # Volatility Sizing (1/ATR)
+T6_RISK_PER_TRADE_PCT = 0.01         # 1% equity risk per trade
+
 # --- Paper tracking ---
 PAPER_DB_PATH = "paper_trades.db"
+

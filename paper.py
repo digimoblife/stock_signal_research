@@ -108,6 +108,31 @@ def _check_exits(today_dt: datetime) -> list[dict]:
                          "pnl_pct": pnl_pct, "days_held": days_held})
             continue
 
+        # Dynamic Trailing Stop check
+        import settings as _s
+        if getattr(_s, "T6_TRAILING_STOP_ENABLED", False):
+            atr_val = pos.get("atr_at_entry") or (entry_price * 0.03)
+            trail_mult = getattr(_s, "T6_TRAILING_STOP_ATR_MULT", 2.2)
+            trail_threshold = new_hwm - trail_mult * atr_val
+            min_activation = entry_price + 1.5 * atr_val
+
+            if new_hwm >= min_activation and low <= trail_threshold:
+                exit_price = trail_threshold * (1 - T6_COST_PER_TRADE / 2)
+                pnl_pct = (exit_price / entry_price - 1) * 100
+                pnl_abs = _compute_pnl_absolute(pos, exit_price)
+                days_held = (today_dt - datetime.strptime(pos["entry_date"], "%Y-%m-%d")).days
+
+                update_paper_trade(pos["id"], {
+                    "exit_date": today_str, "exit_price": round(exit_price, 2),
+                    "exit_reason": "trailing_stop", "status": "PAPER_CLOSED",
+                    "pnl_pct": round(pnl_pct, 2), "pnl_absolute": round(pnl_abs, 0),
+                    "days_held": days_held,
+                })
+                log.info(f"🎯 Paper trailing stop: {ticker} at {exit_price:,.0f} ({pnl_pct:+.2f}%)")
+                exits.append({"type": "exit", "reason": "trailing_stop", "ticker": ticker,
+                             "pnl_pct": pnl_pct, "days_held": days_held})
+                continue
+
         # Max hold check
         max_hold_end = pos.get("max_hold_end")
         if max_hold_end and today_str >= max_hold_end:
@@ -125,6 +150,7 @@ def _check_exits(today_dt: datetime) -> list[dict]:
             log.info(f"⏰ Paper time stop: {ticker} at {exit_price:,.0f} ({pnl_pct:+.2f}%)")
             exits.append({"type": "exit", "reason": "time_stop", "ticker": ticker,
                          "pnl_pct": pnl_pct, "days_held": days_held})
+
 
     return exits
 
@@ -161,6 +187,11 @@ def _t6_signals(today: str) -> list[dict]:
 
         if slots_remaining <= 0:
             log.info(f"T6: max {T6_MAX_POSITIONS} positions reached, no new entries")
+            return []
+
+        # Market trend filter check
+        if getattr(_s, "T6_USE_MARKET_FILTER", False) and not filter_module.is_market_bullish(as_of=today):
+            log.info("T6 market filter active: IHSG market benchmark is below MA50. Skipping new entries.")
             return []
 
         tickers, _ = get_eligible_tickers()
@@ -201,6 +232,12 @@ def _t6_signals(today: str) -> list[dict]:
             if pd.isna(ma50) or close <= ma50:
                 continue
 
+            # Relative Strength RS20 check vs IHSG
+            rs20 = filter_module.compute_relative_strength(ticker, as_of=today)
+            min_rs = getattr(_s, "T6_MIN_RS20", 1.05)
+            if rs20 < min_rs:
+                continue
+
             # Volume ratio filter
             idx_loc = df.index.get_loc(signal_date)
             prev_vol = df["volume"].iloc[max(0, idx_loc - 5):idx_loc].mean()
@@ -221,15 +258,23 @@ def _t6_signals(today: str) -> list[dict]:
             # Max hold end (calendar days)
             max_hold_end = _add_trading_days(datetime.now(), T6_MAX_HOLD_DAYS)
 
-            # Position sizing
+            # Position sizing (Risk Parity vs Equal Capital)
             from settings import T6_STARTING_CAPITAL, T6_MAX_POSITIONS
-            pos_size = T6_STARTING_CAPITAL / T6_MAX_POSITIONS
-            shares = int(pos_size / close)
+            if getattr(_s, "T6_RISK_PARITY_ENABLED", False):
+                risk_pct = getattr(_s, "T6_RISK_PER_TRADE_PCT", 0.01)
+                risk_capital = T6_STARTING_CAPITAL * risk_pct
+                risk_per_share = T6_STOP_ATR * atr
+                shares = int(risk_capital / risk_per_share) if risk_per_share > 0 else int((T6_STARTING_CAPITAL / T6_MAX_POSITIONS) / close)
+            else:
+                pos_size = T6_STARTING_CAPITAL / T6_MAX_POSITIONS
+                shares = int(pos_size / close)
+
             if shares <= 0:
                 continue
 
             # Entry price with transaction cost
             entry_price = close * (1 + T6_COST_PER_TRADE / 2)
+
 
             signals.append({
                 "ticker": ticker,
