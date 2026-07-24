@@ -953,6 +953,41 @@ systemctl start cron
 systemctl enable cron
 ```
 
+### 11.8 Setting Up Telegram Command Listener Bot (`bot.py`) Service
+
+To allow the Telegram bot to listen for commands like `/trade`, `/signal`, `/status` 24/7 on your VPS, run it as a systemd service:
+
+```bash
+# 1. Create the systemd service file
+cat << 'EOF' > /etc/systemd/system/stock-bot.service
+[Unit]
+Description=IDX Stock Signal Telegram Command Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/idx-research
+ExecStart=/root/idx-research/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 2. Reload systemd daemon
+systemctl daemon-reload
+
+# 3. Enable and start the bot service
+systemctl enable stock-bot.service
+systemctl start stock-bot.service
+
+# 4. Check bot status
+systemctl status stock-bot.service
+```
+
 ---
 
 ## 12. Troubleshooting Guide

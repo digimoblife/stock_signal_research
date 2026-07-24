@@ -115,6 +115,9 @@ def cmd_daily():
     # 2. Generate signals
     log.info("Generating signals...")
     signals = generate_signals()
+    new_count = 0
+    reminder_count = 0
+
     if not signals:
         msg = "No signals generated today."
         log.info(msg)
@@ -122,8 +125,6 @@ def cmd_daily():
         send(f"🤖 IDX Research — {today}\n\n{msg}")
     else:
         # 3. Save and send each signal
-        new_count = 0
-        reminder_count = 0
         for sig in signals:
             signal_id = save_signal(sig)
             if not signal_id:

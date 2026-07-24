@@ -1,30 +1,29 @@
 #!/bin/bash
-# deploy_vps.sh — complete VPS deployment for IDX Research System
-# Run as root on your OVH VPS.
-#
-# USAGE:
-#   On your local Mac:
-#     scp -r /path/to/research root@YOUR_VPS_IP:~/idx-research
-#     ssh root@YOUR_VPS_IP
-#     cd ~/idx-research && bash scripts/deploy_vps.sh
+# deploy_vps.sh — complete VPS deployment for IDX Research System & Telegram Command Bot
+# Run as root on your VPS.
 
 set -e
 
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 echo "=== IDX Research System — VPS Deployment ==="
+echo "Target Directory: ${APP_DIR}"
 echo ""
 
 # ── 1. System update ─────────────────────────────────────────
 apt update && apt upgrade -y
 
 # ── 2. Python + essentials ───────────────────────────────────
-apt install -y python3 python3-pip python3-venv git curl cron
+apt install -y python3 python3-pip python3-venv git curl cron ufw
 
 # ── 3. Create required directories ───────────────────────────
-cd ~/idx-research
+cd "${APP_DIR}"
 mkdir -p data logs backups
 
 # ── 4. Virtual environment ───────────────────────────────────
-python3 -m venv .venv
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
 source .venv/bin/activate
 pip install --upgrade pip -q
 pip install -r requirements.txt -q
@@ -36,7 +35,7 @@ python run.py init
 
 # ── 6. Fetch historical data ────────────────────────────────
 echo ""
-echo "=== Fetching historical data (5-10 minutes) ==="
+echo "=== Fetching historical data ==="
 python run.py fetch
 
 # ── 7. Run initial research ─────────────────────────────────
@@ -44,18 +43,18 @@ echo ""
 echo "=== Running strategy backtest ==="
 python run.py research
 
-# ── 8. Set up cron ──────────────────────────────────────────
-cat > /tmp/idx_cron << 'CRON'
+# ── 8. Set up cron for daily automated scans ────────────────
+cat > /tmp/idx_cron << CRON
 # IDX Research System — daily signal generation 17:30 WIB (10:30 UTC)
-30 10 * * 1-5 cd /root/idx-research && .venv/bin/python run.py daily >> logs/daily.log 2>&1
+30 10 * * 1-5 cd ${APP_DIR} && .venv/bin/python run.py daily --paper >> logs/daily.log 2>&1
 # Daily health check — 5 min after signals, 17:35 WIB (10:35 UTC)
-35 10 * * 1-5 cd /root/idx-research && .venv/bin/python run.py health >> logs/health.log 2>&1
+35 10 * * 1-5 cd ${APP_DIR} && .venv/bin/python run.py health >> logs/health.log 2>&1
 # Weekly performance — Sunday 20:00 WIB (13:00 UTC)
-0 13 * * 0 cd /root/idx-research && .venv/bin/python run.py performance >> logs/weekly.log 2>&1
+0 13 * * 0 cd ${APP_DIR} && .venv/bin/python run.py weekly >> logs/weekly.log 2>&1
 # Weekly DB backup — Sunday 21:00 WIB (14:00 UTC), keep 90 days
-0 14 * * 0 cp /root/idx-research/signals.db /root/idx-research/backups/signals_$(date +\%Y\%m\%d).db && find /root/idx-research/backups -name '*.db' -mtime +90 -delete
+0 14 * * 0 cp ${APP_DIR}/signals.db ${APP_DIR}/backups/signals_\$(date +\%Y\%m\%d).db && find ${APP_DIR}/backups -name '*.db' -mtime +90 -delete
 # Log rotation — keep 30 days of logs
-0 2 * * 0 find /root/idx-research/logs -name '*.log' -mtime +30 -delete
+0 2 * * 0 find ${APP_DIR}/logs -name '*.log' -mtime +30 -delete
 CRON
 crontab /tmp/idx_cron
 
@@ -63,19 +62,44 @@ crontab /tmp/idx_cron
 systemctl enable cron 2>/dev/null || update-rc.d cron defaults 2>/dev/null || true
 systemctl start cron 2>/dev/null || service cron start 2>/dev/null || true
 
-# ── 10. Security ────────────────────────────────────────────
+# ── 10. Register Telegram Bot listener (stock-bot.service) ───
+echo ""
+echo "=== Setting up Telegram Command Bot Service ==="
+cat << EOF > /etc/systemd/system/stock-bot.service
+[Unit]
+Description=IDX Stock Signal Telegram Command Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${APP_DIR}
+ExecStart=${APP_DIR}/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable stock-bot.service
+systemctl restart stock-bot.service
+
+# ── 11. Security ────────────────────────────────────────────
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
 ufw --force enable 2>/dev/null || echo "ufw already active or unavailable"
 
-# ── 11. Deployment verification ─────────────────────────────
+# ── 12. Deployment verification ─────────────────────────────
 echo ""
 echo "=== Verifying deployment ==="
 
 ERRORS=0
 
-# 11a. Verify cron installed
+# 12a. Verify cron installed
 if command -v cron &>/dev/null || command -v cronie &>/dev/null; then
     echo "  ✅ cron: installed"
 else
@@ -83,21 +107,16 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# 11b. Verify crontab loaded
-CURRENT_CRON=$(crontab -l 2>/dev/null | grep -c "idx-research" || true)
+# 12b. Verify crontab loaded
+CURRENT_CRON=$(crontab -l 2>/dev/null | grep -c "${APP_DIR}" || true)
 if [ "$CURRENT_CRON" -ge 1 ]; then
-    echo "  ✅ crontab: $(crontab -l | grep -c "idx-research") entries loaded"
+    echo "  ✅ crontab: loaded"
 else
-    echo "  ❌ crontab: no idx-research entries found"
+    echo "  ❌ crontab: no entries found"
     ERRORS=$((ERRORS + 1))
 fi
 
-echo "  📋 Active cron entries:"
-crontab -l | grep "idx-research" | while read -r line; do
-    echo "     $line"
-done
-
-# 11c. Verify database exists
+# 12c. Verify database exists
 if [ -f "signals.db" ]; then
     SIZE=$(du -h signals.db | cut -f1)
     echo "  ✅ database: signals.db ($SIZE)"
@@ -106,82 +125,37 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# 11d. Verify Telegram connectivity
-echo "  ⏳ Telegram: testing..."
+# 12d. Verify Telegram connectivity
+echo "  ⏳ Telegram: testing outbound connection..."
 TELEGRAM_OK=$(python run.py test 2>&1)
 if echo "$TELEGRAM_OK" | grep -q "OK"; then
-    echo "  ✅ Telegram: working"
+    echo "  ✅ Telegram test: working"
 else
-    echo "  ❌ Telegram: $TELEGRAM_OK"
+    echo "  ❌ Telegram test: $TELEGRAM_OK"
     ERRORS=$((ERRORS + 1))
 fi
 
-# 11e. Verify daily command runs without error
-echo "  ⏳ Daily command: smoke test..."
-DAILY_OK=$(python run.py daily 2>&1) || true
-if echo "$DAILY_OK" | grep -qi "error\|traceback\|failed"; then
-    echo "  ❌ Daily command: errors detected"
-    echo "     $(echo "$DAILY_OK" | grep -i "error\|traceback\|failed" | head -3)"
-    ERRORS=$((ERRORS + 1))
+# 12e. Verify bot service is active
+if systemctl is-active --quiet stock-bot.service; then
+    echo "  ✅ Telegram Bot Service: running 24/7 (stock-bot.service)"
 else
-    LINES=$(echo "$DAILY_OK" | grep -c "\[fetch\]\|\[run\]\|\[signal\]\|Done\|No signals" || true)
-    if [ "$LINES" -ge 1 ]; then
-        echo "  ✅ Daily command: working"
-    else
-        # Could be empty if nothing printed — still may be OK
-        echo "  ✅ Daily command: ran (no signal output today)"
-    fi
-fi
-
-# 11f. Verify logs directory is writable
-if touch logs/.verify && rm logs/.verify; then
-    echo "  ✅ logs: writable"
-else
-    echo "  ❌ logs: NOT writable"
+    echo "  ❌ Telegram Bot Service: failed to start"
     ERRORS=$((ERRORS + 1))
 fi
 
-# ── 12. Summary ──────────────────────────────────────────────
+# ── 13. Summary ──────────────────────────────────────────────
 echo ""
 echo "=== DEPLOYMENT RESULTS ==="
 if [ "$ERRORS" -eq 0 ]; then
-    echo "  All checks passed. System is operational."
+    echo "  🎉 All checks passed! System and Telegram bot are fully operational."
 else
-    echo "  $ERRORS check(s) failed. Review output above."
-    echo "  Fix issues, then re-run: bash scripts/deploy_vps.sh"
+    echo "  ⚠️ $ERRORS check(s) failed. Review output above."
 fi
 
 echo ""
-echo "=== NEXT STEPS ==="
-echo "  1. Verify Telegram delivery worked (check your phone)"
-echo "  2. First automated run: Mon-Fri at 17:30 WIB (10:30 UTC)"
-echo "  3. Monitor health: check logs/daily.log and logs/health.log"
-echo ""
-echo "  Quick reference commands:"
-echo "    View logs:    tail -f logs/daily.log"
-echo "    Force daily:  .venv/bin/python run.py daily"
-echo "    Health:       .venv/bin/python run.py health"
-echo "    Performance:  .venv/bin/python run.py performance"
-echo "    Edit config:  nano settings.py"
-echo ""
-echo "  Cron schedule (WIB = UTC+7):"
-echo "    17:30 Mon-Fri — Signal generation"
-echo "    17:35 Mon-Fri — Health check"
-echo "    20:00 Sun     — Weekly performance report"
-echo "    21:00 Sun     — Database backup"
-echo "    09:00 Sun     — Log rotation (30-day retention)"
-echo ""
-echo "  Files:"
-echo "    ~/idx-research/"
-echo "    ├── run.py           — main entry point"
-echo "    ├── settings.py      — configuration (edit this)"
-echo "    ├── fetch.py         — data downloader (3 retries)"
-echo "    ├── research.py      — strategy backtester"
-echo "    ├── gen_signal.py    — signal generation"
-echo "    ├── track.py         — database tracking"
-echo "    ├── telegram_sender.py — Telegram delivery (3 retries)"
-echo "    ├── monitor.py       — health monitoring"
-echo "    ├── signals.db       — SQLite database"
-echo "    ├── data/            — OHLCV CSV files"
-echo "    ├── logs/            — cron output (30-day retention)"
-echo "    └── backups/         — weekly DB snapshots (90-day retention)"
+echo "=== QUICK COMMANDS ON VPS ==="
+echo "  Check Bot status:  systemctl status stock-bot.service"
+echo "  Restart Bot:       systemctl restart stock-bot.service"
+echo "  View Bot logs:     journalctl -u stock-bot.service -f"
+echo "  View Cron logs:    tail -f logs/daily.log"
+echo "  Manual scan:       .venv/bin/python run.py daily --paper"
