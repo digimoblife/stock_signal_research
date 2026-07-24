@@ -54,8 +54,10 @@ SWING_MIN_VOL_RATIO = 2.0
 
 
 # Where data lives
-DATA_DIR = "data"
-DB_PATH = "signals.db"
+DATA_DIR = os.getenv("DATA_DIR", "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+DB_PATH = os.getenv("DB_PATH", os.path.join(DATA_DIR, "signals.db") if DATA_DIR != "data" else "signals.db")
 
 # --- Data ---
 START_DATE = "2018-01-01"
@@ -117,5 +119,5 @@ T6_RISK_PARITY_ENABLED = True        # Volatility Sizing (1/ATR)
 T6_RISK_PER_TRADE_PCT = 0.01         # 1% equity risk per trade
 
 # --- Paper tracking ---
-PAPER_DB_PATH = "paper_trades.db"
+PAPER_DB_PATH = os.getenv("PAPER_DB_PATH", os.path.join(DATA_DIR, "paper_trades.db") if DATA_DIR != "data" else "paper_trades.db")
 
