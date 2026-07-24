@@ -281,13 +281,27 @@ def scheduled_daily_job():
     cmd_daily()
 
 
+async def post_init_scheduler(application):
+    """Start APScheduler inside the running asyncio event loop."""
+    if AsyncIOScheduler:
+        scheduler = AsyncIOScheduler(timezone="Asia/Jakarta")
+        scheduler.add_job(
+            lambda: asyncio.to_thread(scheduled_daily_job),
+            CronTrigger(day_of_week="mon-fri", hour=17, minute=30, timezone="Asia/Jakarta")
+        )
+        scheduler.start()
+        log.info("Automated background scheduler active: Mon-Fri at 17:30 WIB.")
+    else:
+        log.warning("APScheduler not installed. Automatic 17:30 WIB background scans disabled.")
+
+
 def main():
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN":
         log.error("TELEGRAM_BOT_TOKEN is not set in environment or .env file.")
         sys.exit(1)
 
     log.info("Initializing Telegram Command Listener Bot...")
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init_scheduler).build()
 
     # Register command handlers
     app.add_handler(CommandHandler(["start", "help"], cmd_start_help))
@@ -300,18 +314,6 @@ def main():
     app.add_handler(CommandHandler("open", cmd_open_handler))
     app.add_handler(CommandHandler("fetch", cmd_fetch_handler))
     app.add_handler(CommandHandler("health", cmd_health_handler))
-
-    # Automated background scheduler for 17:30 WIB daily scans
-    if AsyncIOScheduler:
-        scheduler = AsyncIOScheduler(timezone="Asia/Jakarta")
-        scheduler.add_job(
-            lambda: asyncio.to_thread(scheduled_daily_job),
-            CronTrigger(day_of_week="mon-fri", hour=17, minute=30, timezone="Asia/Jakarta")
-        )
-        scheduler.start()
-        log.info("Automated background scheduler active: Mon-Fri at 17:30 WIB.")
-    else:
-        log.warning("APScheduler not installed. Automatic 17:30 WIB background scans disabled.")
 
     log.info("Bot listener running. Listening for Telegram chat commands...")
     app.run_polling()
